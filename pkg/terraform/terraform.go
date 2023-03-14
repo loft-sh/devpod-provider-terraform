@@ -1,0 +1,243 @@
+package terraform
+
+import (
+	"context"
+	"encoding/base64"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/loft-sh/devpod-provider-terraform/pkg/options"
+	"github.com/loft-sh/devpod/pkg/config"
+	"github.com/loft-sh/devpod/pkg/log"
+	"github.com/loft-sh/devpod/pkg/ssh"
+	"github.com/pkg/errors"
+
+	"github.com/hashicorp/go-version"
+	"github.com/hashicorp/hc-install/product"
+	"github.com/hashicorp/hc-install/releases"
+	"github.com/hashicorp/terraform-exec/tfexec"
+
+	cp "github.com/otiai10/copy"
+)
+
+func NewProvider(logs log.Logger) (*TerraformProvider, error) {
+	providerConfig, err := options.FromEnv()
+	if err != nil {
+		return nil, err
+	}
+
+	devpodPath, err := config.GetConfigDir()
+	if err != nil {
+		return nil, err
+	}
+
+	terraformPath := devpodPath + "/bin/terraform"
+
+	project, err := options.FromEnvOrError(options.TERRAFORM_PROJECT)
+	if err != nil {
+		return nil, err
+	}
+
+	// create provider
+	provider := &TerraformProvider{
+		Config:     providerConfig,
+		Log:        logs,
+		Bin:        terraformPath,
+		Project:    project,
+		State:      providerConfig.MachineFolder + "/main.tfstate",
+		WorkingDir: providerConfig.MachineFolder + "/.terraform",
+	}
+
+	return provider, nil
+}
+
+type TerraformProvider struct {
+	Config     *options.Options
+	Log        log.Logger
+	Bin        string
+	Project    string
+	State      string
+	WorkingDir string
+}
+
+func EnsureProject(providerTerraform *TerraformProvider) error {
+	// if project is already in place, exit
+	_, err := os.Stat(providerTerraform.Config.MachineFolder + "/.terraform")
+	if err == nil {
+		return nil
+	}
+
+	// if project is an url, try to clone it
+	if strings.Contains(providerTerraform.Project, "http://") ||
+		strings.Contains(providerTerraform.Project, "https://") {
+		cmd := exec.Command(
+			"git",
+			"clone",
+			providerTerraform.Project,
+			providerTerraform.Config.MachineFolder+"/.terraform",
+		)
+		return cmd.Run()
+	}
+
+	// else we have a path, let's copy it to destination
+	_, err = os.Stat(providerTerraform.Project)
+	if err != nil {
+		return errors.Errorf("terraform project not found")
+	}
+
+	err = cp.Copy(providerTerraform.Project,
+		providerTerraform.Config.MachineFolder+"/.terraform")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func Init(providerTerraform *TerraformProvider) (*tfexec.Terraform, error) {
+	err := EnsureProject(providerTerraform)
+	if err != nil {
+		return nil, err
+	}
+
+	workingDir := providerTerraform.Config.MachineFolder + "/.terraform"
+	tf, err := tfexec.NewTerraform(workingDir, providerTerraform.Bin)
+	if err != nil {
+		return nil, err
+	}
+
+	err = tf.Init(context.Background(), tfexec.Upgrade(true))
+	if err != nil {
+		return nil, err
+	}
+
+	return tf, nil
+}
+
+func Install(providerTerraform *TerraformProvider) error {
+	err := EnsureProject(providerTerraform)
+	if err == nil {
+		return nil
+	}
+
+	err = exec.Command(providerTerraform.Bin, "version").Run()
+	if err == nil {
+		return nil
+	}
+
+	destPath := filepath.Dir(providerTerraform.Bin)
+
+	err = os.MkdirAll(destPath, os.ModePerm)
+	if err != nil {
+		return err
+	}
+
+	installer := &releases.ExactVersion{
+		InstallDir: destPath,
+		Product:    product.Terraform,
+		Version:    version.Must(version.NewVersion("1.4.0")),
+	}
+
+	_, err = installer.Install(context.Background())
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func Create(providerTerraform *TerraformProvider) error {
+	tf, err := Init(providerTerraform)
+	if err != nil {
+		return err
+	}
+
+	publicKeyBase, err := ssh.GetPublicKeyBase(providerTerraform.Config.MachineFolder)
+	if err != nil {
+		return err
+	}
+
+	publicKey, err := base64.StdEncoding.DecodeString(publicKeyBase)
+	if err != nil {
+		return err
+	}
+
+	plan, err := tf.Plan(context.Background(),
+		tfexec.Lock(false),
+		tfexec.Parallelism(99),
+		tfexec.Refresh(false),
+		tfexec.State(providerTerraform.State),
+		tfexec.Var("disk_image="+providerTerraform.Config.DiskImage),
+		tfexec.Var("disk_size="+providerTerraform.Config.DiskSizeGB),
+		tfexec.Var("instance_type="+providerTerraform.Config.MachineType),
+		tfexec.Var("machine_name="+providerTerraform.Config.MachineID),
+		tfexec.Var("region="+providerTerraform.Config.Zone),
+		tfexec.Var("ssh_key="+string(publicKey)),
+	)
+	if err != nil {
+		return err
+	}
+
+	if !plan {
+		return errors.Errorf("failed plan")
+	}
+
+	err = tf.Apply(context.Background(),
+		tfexec.Lock(false),
+		tfexec.Parallelism(99),
+		tfexec.Refresh(false),
+		tfexec.State(providerTerraform.State),
+		tfexec.Var("disk_image="+providerTerraform.Config.DiskImage),
+		tfexec.Var("disk_size="+providerTerraform.Config.DiskSizeGB),
+		tfexec.Var("instance_type="+providerTerraform.Config.MachineType),
+		tfexec.Var("machine_name="+providerTerraform.Config.MachineID),
+		tfexec.Var("region="+providerTerraform.Config.Zone),
+		tfexec.Var("ssh_key="+string(publicKey)),
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func Delete(providerTerraform *TerraformProvider) error {
+	tf, err := Init(providerTerraform)
+	if err != nil {
+		return err
+	}
+
+	err = tf.Destroy(context.Background(),
+		tfexec.Lock(false),
+		tfexec.Parallelism(99),
+		tfexec.Refresh(false),
+		tfexec.State(providerTerraform.State),
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func GetExternalIP(providerTerraform *TerraformProvider) (string, error) {
+	tf, err := Init(providerTerraform)
+	if err != nil {
+		return "", err
+	}
+
+	output, err := tf.Output(context.Background(),
+		tfexec.State(providerTerraform.State),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	if output["public_ip"].Value == nil {
+		return "", errors.Errorf("output not found")
+	}
+
+	return strings.ReplaceAll(string(output["public_ip"].Value), "\"", ""), nil
+}

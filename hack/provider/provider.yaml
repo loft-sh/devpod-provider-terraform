@@ -1,0 +1,70 @@
+name: terraform
+version: ##VERSION##
+description: |-
+  DevPod on Terraform
+options:
+  REGION:
+    description: The cloud region to create the VM in. E.g. us-west-1
+    required: true
+    command: echo ""
+  TERRAFORM_PROJECT:
+    description: The path or repo where the terraform files are. E.g. ./examples/terraform or https://github.com/examples/terraform
+    required: true
+    command: echo ""
+  DISK_SIZE:
+    description: The disk size to use.
+    default: "40"
+  IMAGE_DISK:
+    description: The disk image to use.
+  INSTANCE_TYPE:
+    description: The machine type to use.
+  INACTIVITY_TIMEOUT:
+    description: If defined, will automatically stop the VM after the inactivity period.
+    default: 10m
+  INJECT_GIT_CREDENTIALS:
+    description: "If DevPod should inject git credentials into the remote host."
+    default: "true"
+  INJECT_DOCKER_CREDENTIALS:
+    description: "If DevPod should inject docker credentials into the remote host."
+    default: "true"
+  AGENT_PATH:
+    description: The path where to inject the DevPod agent to.
+    default: /var/lib/toolbox/devpod
+agent:
+  path: ${AGENT_PATH}
+  inactivityTimeout: ${INACTIVITY_TIMEOUT}
+  injectGitCredentials: ${INJECT_GIT_CREDENTIALS}
+  injectDockerCredentials: ${INJECT_DOCKER_CREDENTIALS}
+  exec:
+    shutdown: |-
+      shutdown -n now
+binaries:
+  TERRAFORM_PROVIDER:
+    - os: linux
+      arch: amd64
+      path: https://github.com/loft-sh/devpod-provider-terraform/releases/download/##VERSION##/devpod-provider-terraform-linux-amd64
+      checksum: ##CHECKSUM_LINUX_AMD64##
+    - os: linux
+      arch: arm64
+      path: https://github.com/loft-sh/devpod-provider-terraform/releases/download/##VERSION##/devpod-provider-terraform-linux-arm64
+      checksum: ##CHECKSUM_LINUX_ARM64##
+    - os: darwin
+      arch: amd64
+      path: https://github.com/loft-sh/devpod-provider-terraform/releases/download/##VERSION##/devpod-provider-terraform-darwin-amd64
+      checksum: ##CHECKSUM_DARWIN_AMD64##
+    - os: darwin
+      arch: arm64
+      path: https://github.com/loft-sh/devpod-provider-terraform/releases/download/##VERSION##/devpod-provider-terraform-darwin-arm64
+      checksum: ##CHECKSUM_DARWIN_ARM64##
+    - os: windows
+      arch: amd64
+      path: https://github.com/loft-sh/devpod-provider-terraform/releases/download/##VERSION##/devpod-provider-terraform-windows-amd64.exe
+      checksum: ##CHECKSUM_WINDOWS_AMD64##
+exec:
+  init: ${TERRAFORM_PROVIDER} init
+  command: ${TERRAFORM_PROVIDER} command
+  create: ${TERRAFORM_PROVIDER} create
+  delete: ${TERRAFORM_PROVIDER} delete
+  start: ${TERRAFORM_PROVIDER} start
+  stop: ${TERRAFORM_PROVIDER} stop
+  status: ${TERRAFORM_PROVIDER} status
