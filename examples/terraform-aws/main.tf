@@ -3,6 +3,11 @@ variable "disk_image" {
   default = "ami-0c1bea58988a989155"
 }
 
+variable "state" {
+  type = string
+  default = "running"
+}
+
 variable "machine_name" {
   type = string
   default = "devpod-devpod"
@@ -78,9 +83,9 @@ resource "aws_instance" "devpod" {
 useradd devpod -d /home/devpod
 mkdir -p /home/devpod
 if grep -q sudo /etc/groups; then
-usermod -aG sudo devpod
+  usermod -aG sudo devpod
 elif grep -q wheel /etc/groups; then
-usermod -aG wheel devpod
+  usermod -aG wheel devpod
 fi
 echo "devpod ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/91-devpod
 mkdir -p /home/devpod/.ssh
@@ -88,12 +93,11 @@ echo "${var.ssh_key}" >> /home/devpod/.ssh/authorized_keys
 chmod 0700 /home/devpod/.ssh
 chmod 0600 /home/devpod/.ssh/authorized_keys
 chown -R devpod:devpod /home/devpod
-
+echo "${var.state}"
 EOF
 
   depends_on = [ aws_security_group.devpod ]
 }
-
 
 output "public_ip" {
   value = aws_instance.devpod.public_ip

@@ -37,7 +37,7 @@ agent:
   injectDockerCredentials: ${INJECT_DOCKER_CREDENTIALS}
   exec:
     shutdown: |-
-      shutdown -n now
+      shutdown -P
 binaries:
   TERRAFORM_PROVIDER:
     - os: linux
@@ -65,6 +65,4 @@ exec:
   command: ${TERRAFORM_PROVIDER} command
   create: ${TERRAFORM_PROVIDER} create
   delete: ${TERRAFORM_PROVIDER} delete
-  start: ${TERRAFORM_PROVIDER} start
-  stop: ${TERRAFORM_PROVIDER} stop
   status: ${TERRAFORM_PROVIDER} status

@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/loft-sh/devpod-provider-terraform/pkg/terraform"
 
@@ -57,5 +59,11 @@ func (cmd *StatusCmd) Run(
 	machine *provider.Machine,
 	logs log.Logger,
 ) error {
-	return nil
+	status, err := terraform.Status(providerTerraform)
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprint(os.Stdout, status)
+	return err
 }

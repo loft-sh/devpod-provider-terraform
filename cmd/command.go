@@ -8,8 +8,6 @@ import (
 	"github.com/loft-sh/devpod-provider-terraform/pkg/terraform"
 	"github.com/loft-sh/devpod/pkg/log"
 	"github.com/loft-sh/devpod/pkg/provider"
-	"github.com/loft-sh/devpod/pkg/ssh"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -53,30 +51,5 @@ func (cmd *CommandCmd) Run(
 		return fmt.Errorf("command environment variable is missing")
 	}
 
-	// get private key
-	privateKey, err := ssh.GetPrivateKeyRawBase(providerTerraform.Config.MachineFolder)
-
-	if err != nil {
-		return fmt.Errorf("load private key: %w", err)
-	}
-
-	// get external address
-	externalIP, err := terraform.GetExternalIP(providerTerraform)
-	if err != nil || externalIP == "" {
-		return fmt.Errorf(
-			"instance %s doesn't have an external nat ip",
-			providerTerraform.Config.MachineID,
-		)
-	}
-
-	sshClient, err := ssh.NewSSHClient("devpod", externalIP+":22", privateKey)
-
-	if err != nil {
-		return errors.Wrap(err, "create ssh client")
-	}
-
-	defer sshClient.Close()
-
-	// run command
-	return ssh.Run(sshClient, command, os.Stdin, os.Stdout, os.Stderr)
+	return terraform.Command(providerTerraform, command)
 }

@@ -3,12 +3,14 @@ package terraform
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/loft-sh/devpod-provider-terraform/pkg/options"
+	"github.com/loft-sh/devpod/pkg/client"
 	"github.com/loft-sh/devpod/pkg/config"
 	"github.com/loft-sh/devpod/pkg/log"
 	"github.com/loft-sh/devpod/pkg/ssh"
@@ -122,7 +124,7 @@ func Install(providerTerraform *TerraformProvider) error {
 		return nil
 	}
 
-	err = exec.Command(providerTerraform.Bin, "version").Run()
+	err = exec.Command(providerTerraform.Bin).Run()
 	if err == nil {
 		return nil
 	}
@@ -148,6 +150,54 @@ func Install(providerTerraform *TerraformProvider) error {
 	return nil
 }
 
+func Delete(providerTerraform *TerraformProvider) error {
+	tf, err := Init(providerTerraform)
+	if err != nil {
+		return err
+	}
+
+	err = tf.Destroy(context.Background(),
+		tfexec.Lock(false),
+		tfexec.Refresh(true),
+		tfexec.Parallelism(99),
+		tfexec.State(providerTerraform.State),
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func Command(providerTerraform *TerraformProvider, command string) error {
+	// get private key
+	privateKey, err := ssh.GetPrivateKeyRawBase(providerTerraform.Config.MachineFolder)
+
+	if err != nil {
+		return fmt.Errorf("load private key: %w", err)
+	}
+
+	// get external address
+	externalIP, err := getExternalIP(providerTerraform)
+	if err != nil || externalIP == "" {
+		return fmt.Errorf(
+			"instance %s doesn't have an external nat ip",
+			providerTerraform.Config.MachineID,
+		)
+	}
+
+	sshClient, err := ssh.NewSSHClient("devpod", externalIP+":22", privateKey)
+
+	if err != nil {
+		return errors.Wrap(err, "create ssh client")
+	}
+
+	defer sshClient.Close()
+
+	// run command
+	return ssh.Run(sshClient, command, os.Stdin, os.Stdout, os.Stderr)
+}
+
 func Create(providerTerraform *TerraformProvider) error {
 	tf, err := Init(providerTerraform)
 	if err != nil {
@@ -164,30 +214,23 @@ func Create(providerTerraform *TerraformProvider) error {
 		return err
 	}
 
-	plan, err := tf.Plan(context.Background(),
-		tfexec.Lock(false),
-		tfexec.Parallelism(99),
-		tfexec.Refresh(false),
-		tfexec.State(providerTerraform.State),
-		tfexec.Var("disk_image="+providerTerraform.Config.DiskImage),
-		tfexec.Var("disk_size="+providerTerraform.Config.DiskSizeGB),
-		tfexec.Var("instance_type="+providerTerraform.Config.MachineType),
-		tfexec.Var("machine_name="+providerTerraform.Config.MachineID),
-		tfexec.Var("region="+providerTerraform.Config.Zone),
-		tfexec.Var("ssh_key="+string(publicKey)),
-	)
-	if err != nil {
-		return err
-	}
-
-	if !plan {
-		return errors.Errorf("failed plan")
-	}
-
 	err = tf.Apply(context.Background(),
 		tfexec.Lock(false),
+		tfexec.Refresh(true),
 		tfexec.Parallelism(99),
-		tfexec.Refresh(false),
+		tfexec.State(providerTerraform.State),
+		tfexec.Var("disk_image="+providerTerraform.Config.DiskImage),
+		tfexec.Var("disk_size="+providerTerraform.Config.DiskSizeGB),
+		tfexec.Var("instance_type="+providerTerraform.Config.MachineType),
+		tfexec.Var("machine_name="+providerTerraform.Config.MachineID),
+		tfexec.Var("region="+providerTerraform.Config.Zone),
+		tfexec.Var("ssh_key="+string(publicKey)),
+	)
+	if err != nil {
+		return err
+	}
+	err = tf.Refresh(context.Background(),
+		tfexec.Lock(false),
 		tfexec.State(providerTerraform.State),
 		tfexec.Var("disk_image="+providerTerraform.Config.DiskImage),
 		tfexec.Var("disk_size="+providerTerraform.Config.DiskSizeGB),
@@ -203,26 +246,7 @@ func Create(providerTerraform *TerraformProvider) error {
 	return nil
 }
 
-func Delete(providerTerraform *TerraformProvider) error {
-	tf, err := Init(providerTerraform)
-	if err != nil {
-		return err
-	}
-
-	err = tf.Destroy(context.Background(),
-		tfexec.Lock(false),
-		tfexec.Parallelism(99),
-		tfexec.Refresh(false),
-		tfexec.State(providerTerraform.State),
-	)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func GetExternalIP(providerTerraform *TerraformProvider) (string, error) {
+func getExternalIP(providerTerraform *TerraformProvider) (string, error) {
 	tf, err := Init(providerTerraform)
 	if err != nil {
 		return "", err
@@ -240,4 +264,51 @@ func GetExternalIP(providerTerraform *TerraformProvider) (string, error) {
 	}
 
 	return strings.ReplaceAll(string(output["public_ip"].Value), "\"", ""), nil
+}
+
+func Status(providerTerraform *TerraformProvider) (client.Status, error) {
+	tf, err := Init(providerTerraform)
+	if err != nil {
+		return client.StatusNotFound, err
+	}
+
+	publicKeyBase, err := ssh.GetPublicKeyBase(providerTerraform.Config.MachineFolder)
+	if err != nil {
+		return client.StatusNotFound, err
+	}
+
+	publicKey, err := base64.StdEncoding.DecodeString(publicKeyBase)
+	if err != nil {
+		return client.StatusNotFound, err
+	}
+	err = tf.Refresh(context.Background(),
+		tfexec.Lock(false),
+		tfexec.State(providerTerraform.State),
+		tfexec.Var("disk_image="+providerTerraform.Config.DiskImage),
+		tfexec.Var("disk_size="+providerTerraform.Config.DiskSizeGB),
+		tfexec.Var("instance_type="+providerTerraform.Config.MachineType),
+		tfexec.Var("machine_name="+providerTerraform.Config.MachineID),
+		tfexec.Var("region="+providerTerraform.Config.Zone),
+		tfexec.Var("ssh_key="+string(publicKey)),
+	)
+	if err != nil {
+		return client.StatusNotFound, err
+	}
+
+	state, err := tf.ShowStateFile(
+		context.Background(),
+		providerTerraform.State,
+	)
+	if err != nil {
+		return client.StatusNotFound, err
+	}
+
+	if state.Values == nil {
+		return client.StatusNotFound, nil
+	}
+	if state.Values.Outputs != nil {
+		return client.StatusRunning, nil
+	}
+
+	return client.StatusBusy, nil
 }
