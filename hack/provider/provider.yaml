@@ -2,6 +2,7 @@ name: terraform
 version: ##VERSION##
 description: |-
   DevPod on Terraform
+icon: https://www.vectorlogo.zone/logos/terraformio/terraformio-ar21.svg
 optionGroups:
   - options:
       - AGENT_PATH
