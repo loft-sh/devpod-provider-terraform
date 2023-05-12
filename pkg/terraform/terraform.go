@@ -195,7 +195,7 @@ func Command(providerTerraform *TerraformProvider, command string) error {
 	defer sshClient.Close()
 
 	// run command
-	return ssh.Run(sshClient, command, os.Stdin, os.Stdout, os.Stderr)
+	return ssh.Run(context.Background(), sshClient, command, os.Stdin, os.Stdout, os.Stderr)
 }
 
 func Create(providerTerraform *TerraformProvider) error {
