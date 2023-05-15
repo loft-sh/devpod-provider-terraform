@@ -1,0 +1,36 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+
+jobs:
+  compile-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go 1.19
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.19
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v2
+      - name: Compile binaries
+        run: |
+          export RELEASE_VERSION=0.0.0
+          chmod +x ./hack/build.sh
+          ./hack/build.sh
+          sed -i "s|https://github.com/loft-sh/devpod-provider-.*/releases/download/0.0.0/|$(pwd)/release/|g" release/provider.yaml
+      - name: Run provider
+        run: |
+          ./release/devpod-provider-terraform-linux-amd64
+      - name: Install devpod
+        run: |
+          curl -L -o devpod "https://github.com/loft-sh/devpod/releases/latest/download/devpod-linux-amd64"
+          chmod +x devpod
+      - name: Install devpod provider
+        run: |
+          ./devpod provider add ./release/provider.yaml -o REGION=test-region -o TERRAFORM_PROJECT=examples/terraform-aws/
