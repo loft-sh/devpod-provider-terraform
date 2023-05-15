@@ -119,12 +119,7 @@ func Init(providerTerraform *TerraformProvider) (*tfexec.Terraform, error) {
 }
 
 func Install(providerTerraform *TerraformProvider) error {
-	err := EnsureProject(providerTerraform)
-	if err == nil {
-		return nil
-	}
-
-	err = exec.Command(providerTerraform.Bin).Run()
+	err := exec.Command(providerTerraform.Bin).Run()
 	if err == nil {
 		return nil
 	}
